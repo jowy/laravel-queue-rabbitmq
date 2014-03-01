@@ -1,21 +1,36 @@
 <?php namespace FintechFab\LaravelQueueRabbitMQ\Queue\Jobs;
 
-use AMQPEnvelope;
-use AMQPQueue;
 use Illuminate\Queue\Jobs\Job;
+use PhpAmqpLib\Channel\AMQPChannel;
+use PhpAmqpLib\Message\AMQPMessage;
 use Queue;
 
 class RabbitMQJob extends Job
 {
 
-	protected $queue;
-	protected $envelope;
+    /**
+     * @var string
+     */
+    protected $queue;
 
-	public function __construct($container, AMQPQueue $queue, AMQPEnvelope $envelope)
+    /**
+     * @var AMQPMessage
+     */
+    protected $message;
+
+    /**
+     * @param $container
+     * @param AMQPChannel $channel
+     * @param $queue
+     * @param AMQPMessage $message
+     */
+    public function __construct($container, AMQPChannel $channel, $queue, AMQPMessage $message)
 	{
 		$this->container = $container;
+		$this->channel = $channel;
 		$this->queue = $queue;
-		$this->envelope = $envelope;
+		$this->message = $message;
+
 	}
 
 	/**
@@ -25,7 +40,7 @@ class RabbitMQJob extends Job
 	 */
 	public function fire()
 	{
-		$this->resolveAndFire(json_decode($this->envelope->getBody(), true));
+		$this->resolveAndFire(json_decode($this->message->body, true));
 	}
 
 	/**
@@ -35,7 +50,7 @@ class RabbitMQJob extends Job
 	 */
 	public function getRawBody()
 	{
-		return $this->envelope->getBody();
+		return $this->message->body;
 	}
 
 	/**
@@ -46,7 +61,7 @@ class RabbitMQJob extends Job
 	public function delete()
 	{
 		parent::delete();
-		$this->queue->ack($this->envelope->getDeliveryTag());
+		$this->channel->basic_ack($this->message->delivery_info['delivery_tag']);
 	}
 
 	/**
@@ -56,36 +71,33 @@ class RabbitMQJob extends Job
 	 */
 	public function getQueue()
 	{
-		return $this->queue->getName();
+		return $this->queue;
 	}
 
-	/**
-	 * Release the job back into the queue.
-	 *
-	 * @param  int $delay
-	 *
-	 * @return void
-	 */
-	public function release($delay = 0)
+    /**
+     * @param int $delay
+     * @param bool $failure
+     */
+    public function release($delay = 0, $failure = false)
 	{
 		$this->delete();
 
-		$body = $this->envelope->getBody();
+		$body = $this->message->body;
 		$body = json_decode($body, true);
 
-		$attempts = $this->attempts();
+        if ($failure)
+        {
+            $attempts = $this->attempts();
 
-		// write attempts to body
-		$body['data']['attempts'] = $attempts + 1;
-
-		$job = $body['job'];
-		$data = $body['data'];
+            // write attempts to meta
+            $body['data']['attempts'] = $attempts + 1;
+        }
 
 		// push back to a queue
 		if ($delay > 0) {
-			Queue::later($delay, $job, $data, $this->getQueue());
+			Queue::later($delay, $body['job'], $body['data'], $this->queue);
 		} else {
-			Queue::push($job, $data, $this->getQueue());
+			Queue::push($body['job'], $body['data'], $this->queue);
 		}
 	}
 
@@ -96,7 +108,7 @@ class RabbitMQJob extends Job
 	 */
 	public function attempts()
 	{
-		$body = json_decode($this->envelope->getBody(), true);
+		$body = json_decode($this->message->body, true);
 
 		return isset($body['data']['attempts']) ? $body['data']['attempts'] : 0;
 	}
@@ -108,7 +120,7 @@ class RabbitMQJob extends Job
 	 */
 	public function getJobId()
 	{
-		return $this->envelope->getMessageId();
+		return $this->message->delivery_info['message_id'];
 	}
 
 }

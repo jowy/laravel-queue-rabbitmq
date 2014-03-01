@@ -1,43 +1,51 @@
 <?php namespace FintechFab\LaravelQueueRabbitMQ\Queue;
 
-use AMQPChannel;
-use AMQPConnection;
-use AMQPEnvelope;
-use AMQPException;
-use AMQPExchange;
-use AMQPQueue;
 use FintechFab\LaravelQueueRabbitMQ\Queue\Jobs\RabbitMQJob;
 use Illuminate\Queue\Queue;
 use Illuminate\Queue\QueueInterface;
 
+use PhpAmqpLib\Connection\AMQPConnection;
+use PhpAmqpLib\Channel\AMQPChannel;
+use PhpAmqpLib\Message\AMQPMessage;
+
 class RabbitMQQueue extends Queue implements QueueInterface
 {
 
-	protected $connection;
-	protected $channel;
-	protected $exchange;
-	protected $default_queue;
-	protected $exchange_name;
-	protected $exchange_type;
-	protected $exchange_flags;
+    /**
+     * @var AMQPConnection
+     */
+    protected $connection;
 
-	/**
-	 * @param AMQPConnection $amqpConnection
-	 * @param string         $default_queue
-	 * @param string         $exchange_name
-	 *
-	 * @param mixed          $exchange_type
-	 * @param mixed          $exchange_flags
-	 */
-	public function __construct(AMQPConnection $amqpConnection, $default_queue, $exchange_name, $exchange_type, $exchange_flags)
+    /**
+     * @var AMQPChannel
+     */
+    protected $channel;
+
+    /**
+     * @var string
+     */
+    protected $exchange;
+
+    /**
+     * @param AMQPConnection $amqpConnection
+     * @param $exchange
+     * @param $exchange_type
+     * @param $exchange_flags
+     */
+    public function __construct(AMQPConnection $amqpConnection, $exchange, $exchange_type, $exchange_flags)
 	{
 		$this->connection = $amqpConnection;
-		$this->default_queue = $default_queue;
-		$this->exchange_name = $exchange_name;
-		$this->exchange_type = $exchange_type;
-		$this->exchange_flags = $exchange_flags;
-		$this->channel = $this->getChannel();
-		$this->exchange = $this->getExchange($this->channel);
+        $this->exchange = $exchange;
+        $this->channel = $this->connection->channel();
+        $this->channel->exchange_declare(
+            $exchange,
+            $exchange_type,
+            in_array('passive', $exchange_flags),
+            in_array('durable', $exchange_flags),
+            in_array('auto_delete', $exchange_flags),
+            in_array('internal', $exchange_flags),
+            in_array('nowait', $exchange_flags)
+        );
 	}
 
 	/**
@@ -47,24 +55,12 @@ class RabbitMQQueue extends Queue implements QueueInterface
 	 * @param  mixed  $data
 	 * @param  string $queue
 	 *
-	 * @throws AMQPException
 	 * @return bool
 	 */
 	public function push($job, $data = '', $queue = null)
 	{
 		$payload = $this->createPayload($job, $data);
-
-		// get queue
-		$queue = $this->declareQueue($queue);
-
-		// push task to a queue
-		$job = $this->exchange->publish($payload, $queue->getName());
-
-		if (!$job) {
-			throw new AMQPException('Could not push job to a queue');
-		}
-
-		return $job;
+        return $this->pushRaw($payload, $queue);
 	}
 
 	/**
@@ -79,17 +75,17 @@ class RabbitMQQueue extends Queue implements QueueInterface
 	 */
 	public function pushRaw($payload, $queue = null, array $options = array())
 	{
-		// get queue
-		$queue = $this->declareQueue($queue);
+        $this->channel->queue_declare($queue, false, true, false, false);
+        $this->channel->queue_bind($queue, $this->exchange);
 
-		// push task to a queue
-		$job = $this->exchange->publish($payload, $queue->getName());
+        $message = new AMQPMessage($payload, array_merge($options, array(
+            'content_type' => 'application/json',
+            'delivery_mode' => 2,
+        )));
 
-		if (!$job) {
-			throw new AMQPException('Could not push job to a queue');
-		}
+        $this->channel->basic_publish($message, $this->exchange);
 
-		return $job;
+		return true;
 	}
 
 	/**
@@ -107,17 +103,23 @@ class RabbitMQQueue extends Queue implements QueueInterface
 	{
 		$payload = $this->createPayload($job, $data);
 
-		// declare queues if they do not exist
-		$this->declareQueue($queue);
-		$queue = $this->declareDelayedQueue($queue, $delay);
+        $this->channel->queue_declare($queue, false, true, false, false, false, array(
+            'x-dead-letter-exchange'    => $this->exchange,
+            'x-dead-letter-routing-key' => $queue,
+            'x-message-ttl'             => $delay * 1000,
+        ));
 
-		$job = $this->exchange->publish($payload, $queue->getName());
+        $this->channel->queue_bind($queue, $this->exchange);
 
-		if (!$job) {
-			throw new AMQPException('Could not push job to a queue');
-		}
+        $message = new AMQPMessage($payload, array(
+            'content_type' => 'application/json',
+            'delivery_mode' => 2,
+        ));
 
-		return $job;
+        $this->channel->basic_publish($message, $this->exchange);
+
+        return true;
+
 	}
 
 	/**
@@ -129,102 +131,16 @@ class RabbitMQQueue extends Queue implements QueueInterface
 	 */
 	public function pop($queue = null)
 	{
-		// declare queue if not exists
-		$queue = $this->declareQueue($queue);
+        $this->channel->queue_declare($queue, false, true, false, false);
+        $this->channel->queue_bind($queue, $this->exchange);
 
-		// get envelope
-		$envelope = $queue->get();
+        $message = $this->channel->basic_get($queue);
 
-		if ($envelope instanceof AMQPEnvelope) {
-			return new RabbitMQJob($this->container, $queue, $envelope);
+		if ($message instanceof AMQPMessage) {
+			return new RabbitMQJob($this->container, $this->channel, $queue, $message);
 		}
 
 		return null;
-	}
-
-	/**
-	 * @param $queue
-	 *
-	 * @return string
-	 */
-	public function getQueueName($queue)
-	{
-		return $queue ? : $this->default_queue;
-	}
-
-	/**
-	 * @return AMQPChannel
-	 */
-	public function getChannel()
-	{
-		return new AMQPChannel($this->connection);
-	}
-
-	/**
-	 * @param AMQPChannel $channel
-	 *
-	 * @return AMQPExchange
-	 */
-	public function getExchange(AMQPChannel $channel)
-	{
-		$exchange = new AMQPExchange($channel);
-		$exchange->setName($this->exchange_name);
-		$exchange->setFlags($this->exchange_flags);
-		$exchange->setType($this->exchange_type);
-		$exchange->declareExchange();
-
-		return $exchange;
-	}
-
-	/**
-	 * @param string $name
-	 *
-	 * @return AMQPQueue
-	 */
-	public function declareQueue($name)
-	{
-		$name = $this->getQueueName($name);
-
-		$queue = new AMQPQueue($this->channel);
-		$queue->setName($name);
-		$queue->setFlags(AMQP_DURABLE);
-		$queue->declareQueue();
-
-		$queue->bind($this->exchange->getName(), $name);
-
-		$queue->declareQueue();
-
-		return $queue;
-	}
-
-	/**
-	 * @param string $destination
-	 *
-	 * @param int    $delay
-	 *
-	 * @return AMQPQueue
-	 */
-	public function declareDelayedQueue($destination, $delay)
-	{
-		$destination = $this->getQueueName($destination);
-		$name = $destination . '_deferred_' . $delay;
-
-		$queue = new AMQPQueue($this->channel);
-		$queue->setName($name);
-		$queue->setFlags(AMQP_DURABLE);
-		$queue->setArguments(array(
-			'x-dead-letter-exchange'    => $this->exchange->getName(),
-			'x-dead-letter-routing-key' => $destination,
-			'x-message-ttl'             => $delay * 1000,
-		));
-
-		$queue->declareQueue();
-
-		$queue->bind($this->exchange->getName(), $name);
-
-		$queue->declareQueue();
-
-		return $queue;
 	}
 
 }
