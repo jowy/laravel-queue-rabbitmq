@@ -75,7 +75,7 @@ class RabbitMQQueue extends Queue implements QueueInterface
 	 */
 	public function pushRaw($payload, $queue = null, array $options = array())
 	{
-        $this->channel->queue_declare($queue, false, true, false, false);
+        $this->channel->queue_declare($queue, true, true, false, false);
         $this->channel->queue_bind($queue, $this->exchange);
 
         $message = new AMQPMessage($payload, array_merge($options, array(
@@ -103,7 +103,7 @@ class RabbitMQQueue extends Queue implements QueueInterface
 	{
 		$payload = $this->createPayload($job, $data);
 
-        $this->channel->queue_declare($queue, false, true, false, false, false, array(
+        $this->channel->queue_declare($queue, true, true, false, false, false, array(
             'x-dead-letter-exchange'    => $this->exchange,
             'x-dead-letter-routing-key' => $queue,
             'x-message-ttl'             => $delay * 1000,
@@ -131,7 +131,7 @@ class RabbitMQQueue extends Queue implements QueueInterface
 	 */
 	public function pop($queue = null)
 	{
-        $this->channel->queue_declare($queue, false, true, false, false);
+        $this->channel->queue_declare($queue, true, true, false, false);
         $this->channel->queue_bind($queue, $this->exchange);
 
         $message = $this->channel->basic_get($queue);
