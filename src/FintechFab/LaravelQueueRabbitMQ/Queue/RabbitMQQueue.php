@@ -147,6 +147,8 @@ class RabbitMQQueue extends Queue implements QueueInterface
             return new RabbitMQJob($this->container, $channel, $queue, $message);
         }
 
+        $channel->close();
+
         return null;
     }
 

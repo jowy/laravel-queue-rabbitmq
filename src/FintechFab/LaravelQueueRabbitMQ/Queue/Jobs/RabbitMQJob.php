@@ -19,6 +19,11 @@ class RabbitMQJob extends Job
     protected $message;
 
     /**
+     * @var AMQPChannel
+     */
+    protected $channel;
+
+    /**
      * @param $container
      * @param AMQPChannel $channel
      * @param $queue
@@ -100,8 +105,6 @@ class RabbitMQJob extends Job
         } else {
             Queue::push($body['job'], $body['data'], $this->queue);
         }
-
-        $this->channel->close();
     }
 
     /**
