@@ -26,13 +26,15 @@ class RabbitMQQueue extends Queue implements QueueInterface
      */
     protected $exchange;
 
+    protected $defaultQueue;
+
     /**
      * @param AMQPConnection $amqpConnection
      * @param $exchange
      * @param $exchange_type
      * @param $exchange_flags
      */
-    public function __construct(AMQPConnection $amqpConnection, $exchange, $exchange_type, $exchange_flags)
+    public function __construct(AMQPConnection $amqpConnection, $defaultQueue, $exchange, $exchange_type, $exchange_flags)
     {
         $this->connection = $amqpConnection;
         $this->exchange = $exchange;
@@ -46,6 +48,7 @@ class RabbitMQQueue extends Queue implements QueueInterface
             in_array('internal', $exchange_flags),
             in_array('nowait', $exchange_flags)
         );
+        $this->defaultQueue = $defaultQueue;
     }
 
     /**
@@ -76,6 +79,8 @@ class RabbitMQQueue extends Queue implements QueueInterface
      */
     public function pushRaw($payload, $queue = null, array $options = array())
     {
+        $queue = $queue ? $queue : $this->defaultQueue;
+
         $channel = $this->connection->channel();
         $channel->queue_declare($queue, false, true, false, false);
         $channel->queue_bind($queue, $this->exchange, $queue);
@@ -109,7 +114,9 @@ class RabbitMQQueue extends Queue implements QueueInterface
 
         $channel = $this->connection->channel();
 
-        $channel->queue_declare($queue, true, true, false, false, false, array(
+        $queue = $queue ? $queue : $this->defaultQueue;
+
+        $channel->queue_declare($queue, false, true, false, false, false, array(
             'x-dead-letter-exchange'    => $this->exchange,
             'x-dead-letter-routing-key' => $queue,
             'x-message-ttl'             => $delay * 1000,
@@ -137,8 +144,10 @@ class RabbitMQQueue extends Queue implements QueueInterface
      */
     public function pop($queue = null)
     {
+        $queue = $queue ? $queue : $this->defaultQueue;
+
         $channel = $this->connection->channel();
-        $channel->queue_declare($queue, true, true, false, false);
+        $channel->queue_declare($queue, false, true, false, false);
         $channel->queue_bind($queue, $this->exchange);
 
         $message = $channel->basic_get($queue);

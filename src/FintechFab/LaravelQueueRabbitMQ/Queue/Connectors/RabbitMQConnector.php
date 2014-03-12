@@ -10,18 +10,18 @@ use Illuminate\Queue\Connectors\ConnectorInterface;
 class RabbitMQConnector implements ConnectorInterface
 {
 
-	/**
-	 * Establish a queue connection.
-	 *
-	 * @param  array $config
-	 *
-	 * @return \Illuminate\Queue\QueueInterface
-	 */
-	public function connect(array $config)
-	{
+    /**
+     * Establish a queue connection.
+     *
+     * @param  array $config
+     *
+     * @return \Illuminate\Queue\QueueInterface
+     */
+    public function connect(array $config)
+    {
 
-		// create connection with AMQP
-		$connection = new AMQPConnection(
+        // create connection with AMQP
+        $connection = new AMQPConnection(
             isset($config['host'])                  ? $config['host']                   : '127.0.0.1',
             isset($config['port'])                  ? $config['port']                   : 5672,
             isset($config['login'])                 ? $config['login']                  : 'guest',
@@ -36,19 +36,20 @@ class RabbitMQConnector implements ConnectorInterface
             isset($config['context'])               ? $config['context']                : null
         );
 
-		if (!isset($config['exchange_type'])) {
-			$config['exchange_type'] = 'direct';
-		}
+        if (!isset($config['exchange_type'])) {
+            $config['exchange_type'] = 'direct';
+        }
 
-		if (!isset($config['exchange_flags'])) {
-			$config['exchange_flags'] = array('durable');
-		}
+        if (!isset($config['exchange_flags'])) {
+            $config['exchange_flags'] = array('durable');
+        }
 
-		return new RabbitMQQueue(
-			$connection,
-			$config['exchange_name'],
-			$config['exchange_type'],
-			$config['exchange_flags']
-		);
-	}
+        return new RabbitMQQueue(
+            $connection,
+            $config['queue'],
+            $config['exchange_name'],
+            $config['exchange_type'],
+            $config['exchange_flags']
+        );
+    }
 }
